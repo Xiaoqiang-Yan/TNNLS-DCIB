@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
+import numpy as np
 from torch.distributions import Normal, Independent
 from torch.nn.functional import softplus
-import numpy as np
 
 
 class Model_1(nn.Module):
@@ -23,24 +23,26 @@ class Model_1(nn.Module):
             nn.Linear(self.data_dim, self.feature_dim),
             nn.BatchNorm1d(self.feature_dim),
             nn.ReLU(),
-            nn.Linear(self.feature_dim, self.feature_dim),
-            nn.BatchNorm1d(self.feature_dim),
+            nn.Linear(self.feature_dim, self.feature_dim * 2),
+            nn.BatchNorm1d(self.feature_dim * 2),
             nn.ReLU(),
         )
         _initialize_weights(self)
 
     def forward(self, input, flag=False, fea=None):
+        params = self.net(input)
+        mu, sigma = params[:, :self.feature_dim], params[:, self.feature_dim:]
+        sigma = softplus(sigma) + 1e-7  # Make sigma always positive
+        x_P_F = Independent(Normal(loc=mu, scale=sigma), 1)
+        x_feature = x_P_F.rsample()
         if not flag:
-            x_feature = self.net(input)
             x_cluster = self.cluster(x_feature)
             x_cluster = torch.softmax(x_cluster, dim=1)
         else:
-            x_feature = self.net(input)
             x_feature = x_feature + fea
             x_cluster = self.cluster(x_feature)
             x_cluster = torch.softmax(x_cluster, dim=1)
-
-        return x_feature, x_cluster
+        return x_feature, x_cluster, x_P_F
 
 
 class Model_2(nn.Module):
@@ -60,25 +62,27 @@ class Model_2(nn.Module):
             nn.Linear(self.data_dim, self.feature_dim),
             nn.BatchNorm1d(self.feature_dim),
             nn.ReLU(),
-            nn.Linear(self.feature_dim, self.feature_dim),
-            nn.BatchNorm1d(self.feature_dim),
+            nn.Linear(self.feature_dim, self.feature_dim * 2),
+            nn.BatchNorm1d(self.feature_dim * 2),
             nn.ReLU(),
 
         )
         _initialize_weights(self)
 
     def forward(self, input, flag=False, fea=None):
+        params = self.net(input)
+        mu, sigma = params[:, :self.feature_dim], params[:, self.feature_dim:]
+        sigma = softplus(sigma) + 1e-7  # Make sigma always positive
+        x_P_F = Independent(Normal(loc=mu, scale=sigma), 1)
+        x_feature = x_P_F.rsample()
         if not flag:
-            x_feature = self.net(input)
             x_cluster = self.cluster(x_feature)
             x_cluster = torch.softmax(x_cluster, dim=1)
         else:
-            x_feature = self.net(input)
             x_feature = x_feature + fea
             x_cluster = self.cluster(x_feature)
             x_cluster = torch.softmax(x_cluster, dim=1)
-
-        return x_feature, x_cluster
+        return x_feature, x_cluster, x_P_F
 
 
 class Model_fusion(nn.Module):
@@ -88,10 +92,10 @@ class Model_fusion(nn.Module):
         self.cluster_num = cluster_num
         self.name = 'Model_f'
         self.net = nn.Sequential(
-            nn.Linear(self.feature_dim * 2, self.feature_dim),
-            nn.BatchNorm1d(self.feature_dim),
+            nn.Linear(self.feature_dim * 2, self.feature_dim * 2),
+            nn.BatchNorm1d(self.feature_dim * 2),
             nn.ReLU(),
-            nn.Linear(self.feature_dim, self.feature_dim),
+            nn.Linear(self.feature_dim * 2, self.feature_dim * 2),
             nn.Dropout(p=0.1),
             nn.ReLU()
         )
@@ -99,13 +103,40 @@ class Model_fusion(nn.Module):
 
     def forward(self, input1, input2):
         input = torch.cat((input1, input2), 1)
-        x_feature = self.net(input)
-        return x_feature
+        params = self.net(input)
+        mu, sigma = params[:, :self.feature_dim], params[:, self.feature_dim:]
+        sigma = softplus(sigma) + 1e-7  # Make sigma always positive
+        x_P_F = Independent(Normal(loc=mu, scale=sigma), 1)
+        x_feature = x_P_F.rsample()
+        return x_feature, x_P_F
 
+
+
+class MIEstimator(nn.Module):
+    def __init__(self, size1, size2):
+        super(MIEstimator, self).__init__()
+
+        # Vanilla MLP
+        self.net = nn.Sequential(
+            nn.Linear(size1 + size2, 1024),
+            nn.BatchNorm1d(1024),
+            nn.ReLU(True),
+            nn.Linear(1024, 1024),
+            nn.BatchNorm1d(1024),
+            nn.ReLU(True),
+            nn.Linear(1024, 1),
+        )
+
+    # Gradient for JSD mutual information estimation and EB-based estimation
+    def forward(self, x1, x2):
+        pos = self.net(torch.cat([x1, x2], 1))  # Positive Samples
+        temp = torch.roll(x1, 1, 0)
+        neg = self.net(torch.cat([temp, x2], 1))
+        return -softplus(-pos).mean() - softplus(neg).mean(), pos.mean() - neg.exp().mean() + 1
 
 
 def _initialize_weights(self):
-    print("initialize %s", self.name)
+    # print("initialize %s", self.name)
     for m in self.modules():
         if isinstance(m, nn.Conv2d):
             nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')

@@ -10,7 +10,7 @@ class Dateset_mat():
 
         if self.flag:
             self.img_1 = scipy.io.loadmat(data_path + r"/img_1.mat")
-            self.img_2 = scipy.io.loadmat(data_path + r"/img_2.mat")
+            self.img_2 = scipy.io.loadmat(data_path + r"/img_1.mat")
             self.txt_1 = scipy.io.loadmat(data_path + r"/txt_1.mat")
         else:
             self.img = scipy.io.loadmat(data_path + r"/img.mat")
@@ -23,14 +23,26 @@ class Dateset_mat():
     def getdata(self):
         self.data = []
         if self.flag:
-            self.data.append(self.img_1["img"])
-            self.data.append(self.img_2["img"])
-            self.data.append(self.txt_1["txt"])
+            try:
+                self.data.append(self.img_1["img"])
+                self.data.append(self.img_2["img"])
+                self.data.append(self.txt_1["txt"])
+                self.data.append(self.label["L"])
+            except:
+                self.data.append(self.img_1["temp1"])
+                self.data.append(self.img_2["temp1"])
+                self.data.append(self.txt_1["temp2"])
+                self.data.append(self.label["L"])
         else:
-            self.data.append(self.img["img"])
-            self.data.append(self.txt["txt"])
-        self.data.append(self.label["L"])
-        seed = 1230
+            try:
+                self.data.append(self.img["train_img"])
+                self.data.append(self.txt["train_txt"])
+                self.data.append(self.label["train_L"])
+            except:
+                self.data.append(self.img["test_img"])
+                self.data.append(self.txt["test_txt"])
+                self.data.append(self.label["test_L"])
+        seed = 1040
         fix_seed(seed)
         return self.data
 
